@@ -22,18 +22,61 @@ Both methods update the model-index metadata in model cards.
 import argparse
 import os
 import re
+from textwrap import dedent
 from typing import Any, Dict, List, Optional, Tuple
 
-import dotenv
-import requests
-import yaml
-from huggingface_hub import ModelCard
-from markdown_it import MarkdownIt
 
-dotenv.load_dotenv()
+def load_env() -> None:
+    """Load .env if python-dotenv is available; keep help usable without it."""
+    try:
+        import dotenv  # type: ignore
+    except ModuleNotFoundError:
+        return
+    dotenv.load_dotenv()
 
-HF_TOKEN = os.getenv("HF_TOKEN")
-AA_API_KEY = os.getenv("AA_API_KEY")
+
+def require_markdown_it():
+    try:
+        from markdown_it import MarkdownIt  # type: ignore
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "markdown-it-py is required for table parsing. "
+            "Install with `uv add markdown-it-py` or `pip install markdown-it-py`."
+        ) from exc
+    return MarkdownIt
+
+
+def require_model_card():
+    try:
+        from huggingface_hub import ModelCard  # type: ignore
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "huggingface-hub is required for model card operations. "
+            "Install with `uv add huggingface_hub` or `pip install huggingface-hub`."
+        ) from exc
+    return ModelCard
+
+
+def require_requests():
+    try:
+        import requests  # type: ignore
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "requests is required for Artificial Analysis import. "
+            "Install with `uv add requests` or `pip install requests`."
+        ) from exc
+    return requests
+
+
+def require_yaml():
+    try:
+        import yaml  # type: ignore
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "PyYAML is required for YAML output. "
+            "Install with `uv add pyyaml` or `pip install pyyaml`."
+        ) from exc
+    return yaml
 
 
 # ============================================================================
@@ -465,7 +508,10 @@ def extract_evaluations_from_readme(
         Model-index formatted results or None if no evaluations found
     """
     try:
-        card = ModelCard.load(repo_id, token=HF_TOKEN)
+        load_env()
+        ModelCard = require_model_card()
+        hf_token = os.getenv("HF_TOKEN")
+        card = ModelCard.load(repo_id, token=hf_token)
         readme_content = card.content
 
         if not readme_content:
@@ -505,7 +551,7 @@ def extract_evaluations_from_readme(
             if len(eval_tables) > 1:
                 print(f"\n⚠ Found {len(eval_tables)} evaluation tables.")
                 print("Run inspect-tables first, then use --table to select one:")
-                print(f'  python scripts/evaluation_manager.py inspect-tables --repo-id "{repo_id}"')
+                print(f'  uv run scripts/evaluation_manager.py inspect-tables --repo-id "{repo_id}"')
                 return None
             elif len(eval_tables) == 0:
                 print(f"No evaluation tables found in README for {repo_id}")
@@ -558,7 +604,9 @@ def extract_tables_with_parser(markdown_content: str) -> List[Dict[str, Any]]:
     Extract tables from markdown using markdown-it-py parser.
     Uses GFM (GitHub Flavored Markdown) which includes table support.
     """
-    md = MarkdownIt("gfm-like")
+    MarkdownIt = require_markdown_it()
+    # Disable linkify to avoid optional dependency errors; not needed for table parsing.
+    md = MarkdownIt("gfm-like", {"linkify": False})
     tokens = md.parse(markdown_content)
 
     tables = []
@@ -665,7 +713,10 @@ def detect_table_format(table: Dict[str, Any], repo_id: str) -> Dict[str, Any]:
 def inspect_tables(repo_id: str) -> None:
     """Inspect and display all evaluation tables in a model's README."""
     try:
-        card = ModelCard.load(repo_id, token=HF_TOKEN)
+        load_env()
+        ModelCard = require_model_card()
+        hf_token = os.getenv("HF_TOKEN")
+        card = ModelCard.load(repo_id, token=hf_token)
         readme_content = card.content
 
         if not readme_content:
@@ -710,42 +761,13 @@ def inspect_tables(repo_id: str) -> None:
                 for row_val in analysis["sample_rows"][:5]:
                     print(f"      - {row_val}")
 
-            # Build suggested command
-            cmd_parts = [
-                "python scripts/evaluation_manager.py extract-readme",
-                f'--repo-id "{repo_id}"',
-                f"--table {eval_table_count}"
-            ]
-
-            override_value = None
-            if analysis["format"] == "comparison":
-                exact = next((c for c in analysis.get("model_columns", []) if c["is_exact_match"]), None)
-                if exact:
-                    print(f"\n   ✓ Column match: {exact['header']}")
-                else:
-                    partial = next((c for c in analysis.get("model_columns", []) if c["is_partial_match"]), None)
-                    if partial:
-                        override_value = partial["header"]
-                        print(f"\n   ⚠ No exact match. Best candidate: {partial['header']}")
-                    elif analysis.get("model_columns"):
-                        print(f"\n   ⚠ Could not identify model column. Options:")
-                        for col_info in analysis.get("model_columns", []):
-                            print(f'      "{col_info["header"]}"')
-                        override_value = analysis["model_columns"][0]["header"]
-
-            if override_value:
-                cmd_parts.append(f'--model-name-override "{override_value}"')
-
-            cmd_parts.append("--dry-run")
-
-            print(f"\n   Suggested command:")
-            print(f"      {cmd_parts[0]} \\")
-            for part in cmd_parts[1:-1]:
-                print(f"        {part} \\")
-            print(f"        {cmd_parts[-1]}")
-
         if eval_table_count == 0:
             print("\nNo evaluation tables detected.")
+        else:
+            print("\nSuggested next step:")
+            print(f'  uv run scripts/evaluation_manager.py extract-readme --repo-id "{repo_id}" --table <table-number> --dry-run')
+            print("If your model column/row is not an exact match, add:")
+            print('  --model-name-override "<column header or model name from table>"')
 
         print(f"\n{'='*70}\n")
 
@@ -769,11 +791,15 @@ def get_aa_model_data(creator_slug: str, model_name: str) -> Optional[Dict[str, 
     Returns:
         Model data dictionary or None if not found
     """
+    load_env()
+    AA_API_KEY = os.getenv("AA_API_KEY")
     if not AA_API_KEY:
         raise ValueError("AA_API_KEY environment variable is not set")
 
     url = "https://artificialanalysis.ai/api/v2/data/llms/models"
     headers = {"x-api-key": AA_API_KEY}
+
+    requests = require_requests()
 
     try:
         response = requests.get(url, headers=headers, timeout=30)
@@ -892,12 +918,15 @@ def update_model_card_with_evaluations(
     Returns:
         True if successful, False otherwise
     """
-    if not HF_TOKEN:
-        raise ValueError("HF_TOKEN environment variable is not set")
-
     try:
+        load_env()
+        ModelCard = require_model_card()
+        hf_token = os.getenv("HF_TOKEN")
+        if not hf_token:
+            raise ValueError("HF_TOKEN environment variable is not set")
+
         # Load existing card
-        card = ModelCard.load(repo_id, token=HF_TOKEN)
+        card = ModelCard.load(repo_id, token=hf_token)
 
         # Get model name
         model_name = repo_id.split("/")[-1] if "/" in repo_id else repo_id
@@ -935,7 +964,7 @@ def update_model_card_with_evaluations(
         # Push update
         card.push_to_hub(
             repo_id,
-            token=HF_TOKEN,
+            token=hf_token,
             commit_message=commit_message,
             commit_description=commit_description,
             create_pr=create_pr
@@ -953,7 +982,10 @@ def update_model_card_with_evaluations(
 def show_evaluations(repo_id: str) -> None:
     """Display current evaluations in a model card."""
     try:
-        card = ModelCard.load(repo_id, token=HF_TOKEN)
+        load_env()
+        ModelCard = require_model_card()
+        hf_token = os.getenv("HF_TOKEN")
+        card = ModelCard.load(repo_id, token=hf_token)
 
         if "model-index" not in card.data:
             print(f"No model-index found in {repo_id}")
@@ -998,7 +1030,10 @@ def show_evaluations(repo_id: str) -> None:
 def validate_model_index(repo_id: str) -> bool:
     """Validate model-index format in a model card."""
     try:
-        card = ModelCard.load(repo_id, token=HF_TOKEN)
+        load_env()
+        ModelCard = require_model_card()
+        hf_token = os.getenv("HF_TOKEN")
+        card = ModelCard.load(repo_id, token=hf_token)
 
         if "model-index" not in card.data:
             print(f"✗ No model-index found in {repo_id}")
@@ -1047,19 +1082,56 @@ def validate_model_index(repo_id: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Manage evaluation results in Hugging Face model cards"
+        description=(
+            "Manage evaluation results in Hugging Face model cards.\n\n"
+            "Use standard Python or `uv run scripts/evaluation_manager.py ...` "
+            "to auto-resolve dependencies from the PEP 723 header."
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=dedent(
+            """\
+            Typical workflows:
+              - Inspect tables first:
+                  uv run scripts/evaluation_manager.py inspect-tables --repo-id <model>
+              - Extract from README (dry-run):
+                  uv run scripts/evaluation_manager.py extract-readme --repo-id <model> --dry-run
+              - Import from Artificial Analysis:
+                  AA_API_KEY=... uv run scripts/evaluation_manager.py import-aa --creator-slug org --model-name slug --repo-id <model>
+
+            Tips:
+              - Use --dry-run to preview YAML before pushing.
+              - Set HF_TOKEN (and AA_API_KEY for import-aa); .env is loaded automatically if python-dotenv is installed.
+              - When multiple tables exist, run inspect-tables then select with --table N.
+              - To apply changes (push or PR), rerun extract-readme without --dry-run (optionally with --create-pr).
+            """
+        ),
     )
+    parser.add_argument("--version", action="version", version="evaluation_manager 1.2.0")
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
     # Extract from README command
     extract_parser = subparsers.add_parser(
         "extract-readme",
-        help="Extract evaluation tables from model README"
+        help="Extract evaluation tables from model README",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description="Parse README tables into model-index YAML. Start with inspect-tables, then re-run with --table and --dry-run.",
+        epilog=dedent(
+            """\
+            Examples:
+              uv run scripts/evaluation_manager.py extract-readme --repo-id username/model --dry-run
+              uv run scripts/evaluation_manager.py extract-readme --repo-id username/model --table 2 --model-name-override \"**Model 7B**\" --dry-run
+              uv run scripts/evaluation_manager.py extract-readme --repo-id username/model --table 2 --create-pr
+
+            Apply changes:
+              - After validating the dry run, rerun without --dry-run to push.
+              - Add --create-pr to submit a pull request instead of a direct push.
+            """
+        ),
     )
     extract_parser.add_argument("--repo-id", type=str, required=True, help="HF repository ID")
     extract_parser.add_argument("--table", type=int, help="Table number (1-indexed, from inspect-tables output)")
-    extract_parser.add_argument("--model-name-override", type=str, help="Column header for comparison tables")
+    extract_parser.add_argument("--model-name-override", type=str, help="Column header for comparison/transpose tables")
     extract_parser.add_argument("--task-type", type=str, default="text-generation", help="Task type")
     extract_parser.add_argument("--dataset-name", type=str, default="Benchmarks", help="Dataset name")
     extract_parser.add_argument("--dataset-type", type=str, default="benchmark", help="Dataset type")
@@ -1069,7 +1141,18 @@ def main():
     # Import from AA command
     aa_parser = subparsers.add_parser(
         "import-aa",
-        help="Import evaluation scores from Artificial Analysis"
+        help="Import evaluation scores from Artificial Analysis",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description="Fetch scores from Artificial Analysis API and write them into model-index.",
+        epilog=dedent(
+            """\
+            Examples:
+              AA_API_KEY=... uv run scripts/evaluation_manager.py import-aa --creator-slug anthropic --model-name claude-sonnet-4 --repo-id username/model
+              uv run scripts/evaluation_manager.py import-aa --creator-slug openai --model-name gpt-4o --repo-id username/model --create-pr
+
+            Requires: AA_API_KEY in env (or .env if python-dotenv installed).
+            """
+        ),
     )
     aa_parser.add_argument("--creator-slug", type=str, required=True, help="AA creator slug")
     aa_parser.add_argument("--model-name", type=str, required=True, help="AA model name")
@@ -1079,14 +1162,18 @@ def main():
     # Show evaluations command
     show_parser = subparsers.add_parser(
         "show",
-        help="Display current evaluations in model card"
+        help="Display current evaluations in model card",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description="Print model-index content from the model card (requires HF_TOKEN for private repos).",
     )
     show_parser.add_argument("--repo-id", type=str, required=True, help="HF repository ID")
 
     # Validate command
     validate_parser = subparsers.add_parser(
         "validate",
-        help="Validate model-index format"
+        help="Validate model-index format",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description="Schema sanity check for model-index section of the card.",
     )
     validate_parser.add_argument("--repo-id", type=str, required=True, help="HF repository ID")
 
@@ -1097,10 +1184,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Workflow:
-  1. inspect-tables     → see table structure and columns
-  2. copy command       → suggested extract-readme command
-  3. run with --dry-run → preview YAML output
-  4. remove --dry-run   → apply changes
+  1. inspect-tables     → see table structure, columns, and table numbers
+  2. extract-readme     → run with --table N (from step 1) and --dry-run to preview YAML
+  3. apply changes      → rerun extract-readme without --dry-run when satisfied (optionally with --create-pr)
+
+Reminder:
+  - If your model column/row is not an exact match, add --model-name-override "<column header/model name from table>"
 """
     )
     inspect_parser.add_argument("--repo-id", type=str, required=True, help="HF repository ID")
@@ -1111,58 +1200,70 @@ Workflow:
         parser.print_help()
         return
 
-    # Execute command
-    if args.command == "extract-readme":
-        results = extract_evaluations_from_readme(
-            repo_id=args.repo_id,
-            task_type=args.task_type,
-            dataset_name=args.dataset_name,
-            dataset_type=args.dataset_type,
-            model_name_override=args.model_name_override,
-            table_index=args.table
-        )
+    try:
+        # Execute command
+        if args.command == "extract-readme":
+            results = extract_evaluations_from_readme(
+                repo_id=args.repo_id,
+                task_type=args.task_type,
+                dataset_name=args.dataset_name,
+                dataset_type=args.dataset_type,
+                model_name_override=args.model_name_override,
+                table_index=args.table
+            )
 
-        if not results:
-            print("No evaluations extracted")
-            return
+            if not results:
+                print("No evaluations extracted")
+                return
 
-        if args.dry_run:
-            print("\nPreview of extracted evaluations:")
-            print(yaml.dump({"model-index": [{"name": args.repo_id.split("/")[-1], "results": results}]}, sort_keys=False))
-        else:
+            if args.dry_run:
+                yaml = require_yaml()
+                print("\nPreview of extracted evaluations:")
+                print(
+                    yaml.dump(
+                        {"model-index": [{"name": args.repo_id.split('/')[-1], "results": results}]},
+                        sort_keys=False
+                    )
+                )
+            else:
+                update_model_card_with_evaluations(
+                    repo_id=args.repo_id,
+                    results=results,
+                    create_pr=args.create_pr,
+                    commit_message="Extract evaluation results from README"
+                )
+
+        elif args.command == "import-aa":
+            results = import_aa_evaluations(
+                creator_slug=args.creator_slug,
+                model_name=args.model_name,
+                repo_id=args.repo_id
+            )
+
+            if not results:
+                print("No evaluations imported")
+                return
+
             update_model_card_with_evaluations(
                 repo_id=args.repo_id,
                 results=results,
                 create_pr=args.create_pr,
-                commit_message="Extract evaluation results from README"
+                commit_message=f"Add Artificial Analysis evaluations for {args.model_name}"
             )
 
-    elif args.command == "import-aa":
-        results = import_aa_evaluations(
-            creator_slug=args.creator_slug,
-            model_name=args.model_name,
-            repo_id=args.repo_id
-        )
+        elif args.command == "show":
+            show_evaluations(args.repo_id)
 
-        if not results:
-            print("No evaluations imported")
-            return
+        elif args.command == "validate":
+            validate_model_index(args.repo_id)
 
-        update_model_card_with_evaluations(
-            repo_id=args.repo_id,
-            results=results,
-            create_pr=args.create_pr,
-            commit_message=f"Add Artificial Analysis evaluations for {args.model_name}"
-        )
-
-    elif args.command == "show":
-        show_evaluations(args.repo_id)
-
-    elif args.command == "validate":
-        validate_model_index(args.repo_id)
-
-    elif args.command == "inspect-tables":
-        inspect_tables(args.repo_id)
+        elif args.command == "inspect-tables":
+            inspect_tables(args.repo_id)
+    except ModuleNotFoundError as exc:
+        # Surface dependency hints cleanly when user only needs help output
+        print(exc)
+    except Exception as exc:
+        print(f"Error: {exc}")
 
 
 if __name__ == "__main__":
