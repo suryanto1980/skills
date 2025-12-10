@@ -30,7 +30,7 @@ Hugging Face skills are compatible with Claude Code, Codex, and Gemini CLI. With
 For example:  
 
 ```
-/plugin install hf-llm-trainer@huggingface-skills
+/plugin install model-trainer@huggingface-skills
 ```
 
 ### Codex
