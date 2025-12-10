@@ -299,6 +299,23 @@ Tasks use the format `suite|task|num_fewshot`:
 - `lighteval|hellaswag|0` - HellaSwag zero-shot
 - `leaderboard|arc_challenge|25` - ARC-Challenge with 25-shot
 
+**Finding Available Tasks:**
+The complete list of available lighteval tasks can be found at:
+https://github.com/huggingface/lighteval/blob/main/examples/tasks/all_tasks.txt
+
+This file contains all supported tasks in the format `suite|task|num_fewshot|0` (the trailing `0` is a version flag and can be ignored). Common suites include:
+- `leaderboard` - Open LLM Leaderboard tasks (MMLU, GSM8K, ARC, HellaSwag, etc.)
+- `lighteval` - Additional lighteval tasks
+- `bigbench` - BigBench tasks
+- `original` - Original benchmark tasks
+
+To use a task from the list, extract the `suite|task|num_fewshot` portion (without the trailing `0`) and pass it to the `--tasks` parameter. For example:
+- From file: `leaderboard|mmlu|0` → Use: `leaderboard|mmlu|0` (or change to `5` for 5-shot)
+- From file: `bigbench|abstract_narrative_understanding|0` → Use: `bigbench|abstract_narrative_understanding|0`
+- From file: `lighteval|wmt14:hi-en|0` → Use: `lighteval|wmt14:hi-en|0`
+
+Multiple tasks can be specified as comma-separated values: `--tasks "leaderboard|mmlu|5,leaderboard|gsm8k|5"`
+
 #### Option B: inspect-ai with vLLM Backend
 
 inspect-ai is the UK AI Safety Institute's evaluation framework.

@@ -75,29 +75,32 @@ def run_inspect_vllm(
     """
     setup_environment()
 
-    # Build model args for vLLM
-    model_args = [
-        f"tensor_parallel_size={tensor_parallel_size}",
-        f"gpu_memory_utilization={gpu_memory_utilization}",
-        f"dtype={dtype}",
-    ]
-    if trust_remote_code:
-        model_args.append("trust_remote_code=True")
-
     model_spec = f"vllm/{model_id}"
-
     cmd = [
         "inspect",
         "eval",
         task,
-        "--model", model_spec,
-        "--model-args", ",".join(model_args),
-        "--log-level", log_level,
-        "--max-connections", str(max_connections),
+        "--model",
+        model_spec,
+        "--log-level",
+        log_level,
+        "--max-connections",
+        str(max_connections),
     ]
 
     # vLLM supports temperature=0 unlike HF inference providers
     cmd.extend(["--temperature", str(temperature)])
+
+    # Older inspect-ai CLI versions do not support --model-args; rely on defaults
+    # and let vLLM choose sensible settings for small models.
+    if tensor_parallel_size != 1:
+        cmd.extend(["--tensor-parallel-size", str(tensor_parallel_size)])
+    if gpu_memory_utilization != 0.8:
+        cmd.extend(["--gpu-memory-utilization", str(gpu_memory_utilization)])
+    if dtype != "auto":
+        cmd.extend(["--dtype", dtype])
+    if trust_remote_code:
+        cmd.append("--trust-remote-code")
 
     if limit:
         cmd.extend(["--limit", str(limit)])
@@ -141,26 +144,28 @@ def run_inspect_hf(
     """
     setup_environment()
 
-    # Build model args for HF Transformers
-    model_args = [
-        f"device_map={device}",
-        f"torch_dtype={dtype}",
-    ]
-    if trust_remote_code:
-        model_args.append("trust_remote_code=True")
-
     model_spec = f"hf/{model_id}"
 
     cmd = [
         "inspect",
         "eval",
         task,
-        "--model", model_spec,
-        "--model-args", ",".join(model_args),
-        "--log-level", log_level,
-        "--max-connections", str(max_connections),
-        "--temperature", str(temperature),
+        "--model",
+        model_spec,
+        "--log-level",
+        log_level,
+        "--max-connections",
+        str(max_connections),
+        "--temperature",
+        str(temperature),
     ]
+
+    if device != "auto":
+        cmd.extend(["--device", device])
+    if dtype != "auto":
+        cmd.extend(["--dtype", dtype])
+    if trust_remote_code:
+        cmd.append("--trust-remote-code")
 
     if limit:
         cmd.extend(["--limit", str(limit)])
@@ -310,4 +315,3 @@ Via HF Jobs:
 
 if __name__ == "__main__":
     main()
-
